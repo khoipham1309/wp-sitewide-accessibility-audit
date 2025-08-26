@@ -1,4 +1,4 @@
-# WordPress Accessibility Audit Tool
+# WordPress Sitewide Accessibility Audit Tool
 
 A robust and reliable Node.js script that performs comprehensive accessibility audits on WordPress sites. Simply provide any WordPress website URL, and the tool will automatically detect the sitemap, run pa11y checks on all pages, and generate a detailed HTML report. This enhanced version includes automatic retry logic, concurrency control, and configurable settings to minimize timeouts and failures.
 
