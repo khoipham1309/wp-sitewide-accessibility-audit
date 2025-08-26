@@ -153,14 +153,17 @@ The HTML report includes:
 ## Configuration
 
 ### Default Settings
-The script uses these pa11y settings:
+The script uses these conservative pa11y settings for maximum reliability:
 - Standard: WCAG 2.1 Level AA
-- Timeout: 60 seconds per page (configurable)
-- Wait: 2 seconds after page load (configurable)
+- Timeout: 90 seconds per page (configurable)
+- Wait: 3 seconds after page load (configurable)
 - Includes warnings (but not notices)
 - Max retries: 3 attempts per URL
-- Concurrent checks: 2 (configurable)
-- Delay between requests: 2 seconds
+- Concurrent checks: 1 (single check at a time)
+- Delay between requests: 5 seconds
+- Batch size: 3 URLs per batch
+
+These defaults prioritize reliability over speed. For faster scans on stable sites, you can increase concurrency.
 
 ### Environment Variables
 You can customize the behavior using environment variables:
@@ -210,26 +213,36 @@ This tool uses custom HTML report generation instead of standard pa11y reporters
 
 1. **Timeout errors**: 
    - The enhanced version automatically retries timed-out pages
-   - Increase timeout: `PA11Y_PAGE_TIMEOUT=120000 node audit.js`
-   - Reduce concurrent checks: `PA11Y_MAX_CONCURRENT=1 node audit.js`
+   - Default timeout increased to 90 seconds
+   - Increase timeout further: `PA11Y_PAGE_TIMEOUT=120000 node audit.js yoursite.com`
+   - Script runs with single concurrent check by default for reliability
 
-2. **Network errors**: 
-   - The script now includes retry logic for network failures
-   - Increase retry attempts: `PA11Y_MAX_RETRIES=5 node audit.js`
-   - Add more delay: `PA11Y_REQUEST_DELAY=5000 node audit.js`
+2. **"Failed action" errors**: 
+   - The script no longer uses Pa11y actions that can cause failures
+   - Uses built-in wait option instead of action-based waits
+   - All problematic wait commands have been removed
 
-3. **Memory issues**: 
+3. **Network errors**: 
+   - The script includes retry logic for all network failures
+   - Increase retry attempts: `PA11Y_MAX_RETRIES=5 node audit.js yoursite.com`
+   - Default delay between requests increased to 5 seconds
+
+4. **Memory issues**: 
    - For very large sites, increase Node.js memory:
    ```bash
    node --max-old-space-size=4096 audit.js yoursite.com
    ```
-   - Reduce batch size: `PA11Y_BATCH_SIZE=3 node audit.js yoursite.com`
+   - Default batch size reduced to 3 for better stability
 
-4. **Rate limiting**: 
-   - Increase delay between requests: `PA11Y_REQUEST_DELAY=5000 node audit.js yoursite.com`
-   - Reduce concurrent checks: `PA11Y_MAX_CONCURRENT=1 node audit.js yoursite.com`
+5. **Rate limiting**: 
+   - Default configuration uses 5-second delays between requests
+   - Single concurrent check prevents overwhelming servers
+   - For even more conservative settings:
+   ```bash
+   PA11Y_REQUEST_DELAY=10000 node audit.js yoursite.com
+   ```
 
-5. **Sitemap not found**: 
+6. **Sitemap not found**: 
    - The tool looks for `/sitemap_index.xml` by default
    - If your WordPress site uses a different sitemap location, provide the full URL:
    ```bash

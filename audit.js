@@ -5,26 +5,25 @@ const axios = require('axios');
 const xml2js = require('xml2js');
 const chalk = require('chalk');
 const ora = require('ora');
-const pLimit = require('p-limit');
 
 // Configuration constants - can be overridden by environment variables
 const CONFIG = {
-  // Concurrency and performance
-  MAX_CONCURRENT_CHECKS: parseInt(process.env.PA11Y_MAX_CONCURRENT) || 2,
-  BATCH_SIZE: parseInt(process.env.PA11Y_BATCH_SIZE) || 5,
-  DELAY_BETWEEN_REQUESTS: parseInt(process.env.PA11Y_REQUEST_DELAY) || 2000, // 2 seconds
+  // Concurrency and performance - reduced for better reliability
+  MAX_CONCURRENT_CHECKS: parseInt(process.env.PA11Y_MAX_CONCURRENT) || 1,
+  BATCH_SIZE: parseInt(process.env.PA11Y_BATCH_SIZE) || 3,
+  DELAY_BETWEEN_REQUESTS: parseInt(process.env.PA11Y_REQUEST_DELAY) || 5000, // 5 seconds
   
-  // Timeouts
-  PAGE_TIMEOUT: parseInt(process.env.PA11Y_PAGE_TIMEOUT) || 60000, // 60 seconds
-  PAGE_WAIT: parseInt(process.env.PA11Y_PAGE_WAIT) || 2000, // 2 seconds after page load
-  NAVIGATION_TIMEOUT: parseInt(process.env.PA11Y_NAV_TIMEOUT) || 60000, // 60 seconds
+  // Timeouts - increased for better reliability
+  PAGE_TIMEOUT: parseInt(process.env.PA11Y_PAGE_TIMEOUT) || 90000, // 90 seconds
+  PAGE_WAIT: parseInt(process.env.PA11Y_PAGE_WAIT) || 3000, // 3 seconds
+  NAVIGATION_TIMEOUT: parseInt(process.env.PA11Y_NAV_TIMEOUT) || 90000, // 90 seconds
   
   // Retry configuration
   MAX_RETRIES: parseInt(process.env.PA11Y_MAX_RETRIES) || 3,
   INITIAL_RETRY_DELAY: parseInt(process.env.PA11Y_RETRY_DELAY) || 5000, // 5 seconds
   RETRY_MULTIPLIER: parseFloat(process.env.PA11Y_RETRY_MULTIPLIER) || 2,
   
-  // Browser configuration
+  // Browser configuration - optimized for stability
   BROWSER_ARGS: [
     '--no-sandbox',
     '--disable-setuid-sandbox',
@@ -37,7 +36,16 @@ const CONFIG = {
     '--disable-extensions',
     '--disable-plugins',
     '--disable-images', // Disable images to speed up loading
-    '--disable-javascript', // Optional: uncomment if JS not needed for accessibility checks
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-features=TranslateUI',
+    '--disable-ipc-flooding-protection',
+    '--disable-hang-monitor',
+    '--hide-scrollbars',
+    '--mute-audio',
+    '--disable-default-apps',
+    '--disable-sync',
   ]
 };
 
@@ -77,8 +85,49 @@ function processSitemapUrl(input) {
 const inputUrl = process.argv[2];
 const sitemapUrl = processSitemapUrl(inputUrl);
 
-// Create a limit function for controlling concurrency
-const limit = pLimit(CONFIG.MAX_CONCURRENT_CHECKS);
+/**
+ * Simple concurrency limiter without external dependencies
+ */
+class ConcurrencyLimiter {
+  constructor(limit) {
+    this.limit = limit;
+    this.running = 0;
+    this.queue = [];
+  }
+
+  async run(fn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({
+        fn,
+        resolve,
+        reject
+      });
+      this.process();
+    });
+  }
+
+  async process() {
+    if (this.running >= this.limit || this.queue.length === 0) {
+      return;
+    }
+
+    this.running++;
+    const { fn, resolve, reject } = this.queue.shift();
+
+    try {
+      const result = await fn();
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    } finally {
+      this.running--;
+      this.process();
+    }
+  }
+}
+
+// Create a concurrency limiter
+const limiter = new ConcurrencyLimiter(CONFIG.MAX_CONCURRENT_CHECKS);
 
 // Track browser instances for cleanup
 const browserInstances = new Set();
@@ -250,6 +299,8 @@ function isRetryableError(error) {
     'session closed',
     'page crashed',
     'abnormal',
+    'failed action',
+    'wait for',
   ];
   
   return retryablePatterns.some(pattern => errorMessage.includes(pattern));
@@ -262,7 +313,7 @@ async function runAccessibilityCheck(url, attemptNumber = 1) {
   try {
     // Add some randomness to prevent all checks from hitting at the same time
     if (attemptNumber > 1) {
-      const jitter = Math.random() * 1000; // 0-1 second random delay
+      const jitter = Math.random() * 2000; // 0-2 second random delay
       await delay(jitter);
     }
     
@@ -278,6 +329,11 @@ async function runAccessibilityCheck(url, attemptNumber = 1) {
         handleSIGINT: false,
         handleSIGTERM: false,
         handleSIGHUP: false,
+        defaultViewport: {
+          width: 1280,
+          height: 1024
+        },
+        ignoreHTTPSErrors: true,
       },
       viewport: {
         width: 1280,
@@ -288,13 +344,17 @@ async function runAccessibilityCheck(url, attemptNumber = 1) {
         isLandscape: false,
       },
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
       },
-      actions: [
-        'wait for element html to be visible',
-        `wait for ${CONFIG.PAGE_WAIT}ms`
-      ],
+      // Don't use actions as they cause failures, use wait instead
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      ignoreHTTPSErrors: true,
     });
     
     // Track browser instance for cleanup
@@ -304,7 +364,7 @@ async function runAccessibilityCheck(url, attemptNumber = 1) {
     
     return {
       url,
-      issues: results.issues,
+      issues: results.issues || [],
       status: 'success',
       documentTitle: results.documentTitle || url,
       attempts: attemptNumber
@@ -342,7 +402,7 @@ async function runAccessibilityCheck(url, attemptNumber = 1) {
 async function processUrlBatch(urls, startIndex, totalUrls) {
   const results = [];
   const promises = urls.map((url, index) => 
-    limit(async () => {
+    limiter.run(async () => {
       const globalIndex = startIndex + index + 1;
       const spinner = ora(`[${globalIndex}/${totalUrls}] Checking ${url}...`).start();
       
@@ -393,9 +453,9 @@ async function processUrlBatch(urls, startIndex, totalUrls) {
 }
 
 /**
- * Generate HTML report from results (kept the same as original)
+ * Generate HTML report from results
  */
-function generateHTMLReport(results, totalUrls) {
+function generateHTMLReport(results, totalUrls, domain) {
   const timestamp = new Date().toLocaleString();
   const totalIssues = results.reduce((sum, r) => sum + r.issues.length, 0);
   const failedChecks = results.filter(r => r.status === 'error').length;
@@ -420,7 +480,7 @@ function generateHTMLReport(results, totalUrls) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Accessibility Audit Report - ${sitemapUrl}</title>
+    <title>Accessibility Audit Report - ${domain || sitemapUrl}</title>
     <style>
         * {
             box-sizing: border-box;
@@ -620,7 +680,7 @@ function generateHTMLReport(results, totalUrls) {
 <body>
     <div class="header">
         <h1>Accessibility Audit Report</h1>
-        <p><strong>Site:</strong> ${domain}</p>
+        <p><strong>Site:</strong> ${domain || 'Unknown'}</p>
         <p><strong>Generated:</strong> ${timestamp}</p>
         <p><strong>Standard:</strong> WCAG 2.1 Level AA</p>
         <p><strong>Configuration:</strong> Max ${CONFIG.MAX_RETRIES} retries, ${CONFIG.PAGE_TIMEOUT/1000}s timeout, ${CONFIG.MAX_CONCURRENT_CHECKS} concurrent checks</p>
@@ -645,11 +705,11 @@ function generateHTMLReport(results, totalUrls) {
         </div>
         <div class="stat-card error">
             <h3>Errors</h3>
-            <p class="value">${issuesByType.error}</p>
+            <p class="value">${issuesByType.error || 0}</p>
         </div>
         <div class="stat-card warning">
             <h3>Warnings</h3>
-            <p class="value">${issuesByType.warning}</p>
+            <p class="value">${issuesByType.warning || 0}</p>
         </div>
     </div>
     
@@ -731,7 +791,8 @@ async function main() {
   console.log(chalk.gray(`  - Batch size: ${CONFIG.BATCH_SIZE}`));
   console.log(chalk.gray(`  - Max retries: ${CONFIG.MAX_RETRIES}`));
   console.log(chalk.gray(`  - Page timeout: ${CONFIG.PAGE_TIMEOUT/1000}s`));
-  console.log(chalk.gray(`  - Delay between requests: ${CONFIG.DELAY_BETWEEN_REQUESTS/1000}s\n`));
+  console.log(chalk.gray(`  - Delay between requests: ${CONFIG.DELAY_BETWEEN_REQUESTS/1000}s`));
+  console.log(chalk.yellow(`\n⚠️  Note: Using conservative settings for maximum reliability\n`));
   
   // First, verify the sitemap exists
   console.log(chalk.gray('Verifying sitemap accessibility...\n'));
@@ -789,7 +850,7 @@ async function main() {
   
   // Generate HTML report
   console.log(chalk.cyan('\n📊 Generating HTML report...\n'));
-  const htmlReport = generateHTMLReport(results, urls.length);
+  const htmlReport = generateHTMLReport(results, urls.length, domain);
   
   // Save report
   const reportPath = path.join(process.cwd(), 'report.html');
@@ -827,22 +888,8 @@ async function main() {
   process.exit(0);
 }
 
-// Install p-limit if not already present
-async function checkDependencies() {
-  try {
-    require.resolve('p-limit');
-  } catch (error) {
-    console.log(chalk.yellow('📦 Installing required dependency: p-limit...'));
-    const { execSync } = require('child_process');
-    execSync('npm install p-limit', { stdio: 'inherit' });
-    console.log(chalk.green('✓ Dependency installed\n'));
-  }
-}
-
 // Run the main function
-checkDependencies().then(() => {
-  main().catch(error => {
-    console.error(chalk.red('Unexpected error:'), error);
-    cleanup().then(() => process.exit(1));
-  });
+main().catch(error => {
+  console.error(chalk.red('Unexpected error:'), error);
+  cleanup().then(() => process.exit(1));
 });
