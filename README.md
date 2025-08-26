@@ -170,14 +170,14 @@ You can customize the behavior using environment variables:
 
 ```bash
 # Concurrency and Performance
-PA11Y_MAX_CONCURRENT=3          # Max simultaneous checks (default: 2)
-PA11Y_BATCH_SIZE=10             # URLs per batch (default: 5)
-PA11Y_REQUEST_DELAY=3000        # Delay between requests in ms (default: 2000)
+PA11Y_MAX_CONCURRENT=3          # Max simultaneous checks (default: 1)
+PA11Y_BATCH_SIZE=10             # URLs per batch (default: 3)
+PA11Y_REQUEST_DELAY=3000        # Delay between requests in ms (default: 5000)
 
 # Timeouts
-PA11Y_PAGE_TIMEOUT=90000        # Page load timeout in ms (default: 60000)
-PA11Y_PAGE_WAIT=3000           # Wait after page load in ms (default: 2000)
-PA11Y_NAV_TIMEOUT=90000        # Navigation timeout in ms (default: 60000)
+PA11Y_PAGE_TIMEOUT=120000       # Page load timeout in ms (default: 90000)
+PA11Y_PAGE_WAIT=5000           # Wait after page load in ms (default: 3000)
+PA11Y_NAV_TIMEOUT=120000        # Navigation timeout in ms (default: 90000)
 
 # Retry Configuration
 PA11Y_MAX_RETRIES=5            # Max retry attempts (default: 3)
